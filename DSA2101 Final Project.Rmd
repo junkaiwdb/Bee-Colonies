@@ -1,0 +1,281 @@
+---
+title: "Bee Colonies"
+author: "DSA2101 Project"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(message = FALSE, warning = FALSE, include = TRUE,
+                      fig.align = "center",  out.width = "80%")
+```
+
+```{r libraries, echo = FALSE}
+### Installing libraries
+library(tidyverse)
+library(lubridate)
+library(gridExtra)
+library(knitr)
+```
+
+## Introduction
+
+The data set originates from the United States Department of Agriculture’s quarterly review of the nation’s Honey Bee Colonies. Given the importance of bees to sustaining local biodiversity and the economic productivity of their honey, the rapid decline of bees in the recent decades due to Colony Collapse Disorder (CCD) have been a great source of concern for governments. As such, the collection of Honey Bee data is critical in identifying notable trends and anomalies, allowing for calculated measures to be taken to resolve existing problems. The data is segmented into the different years, states and yearly-quarters. Within the first data set, there is reported data on the number of colonies added, lost and renovated. The second data set hosts the identified stressors of colonies, which encompass the percentage of colonies lost to factors like Varroa Mites, Diseases and Pesticides.
+
+### Problem statement
+
+In beekeeping circles, the renovation of colonies through requeening is critical to ensure the longevity of the hive. It is suggested that requeening can increase a colony’s resistance to Varroa Mites, which have historically been the largest stressors on American colonies. However, due to the variability of seasons and geographical locations, there is a need to find the most optimal time period to carry out renovation processes. 
+
+To answer the question, we zeroed in on the percentage of colonies renovated (Colony_reno_pct), the percentage of colonies affected by Varroa Mites (Varroa mites), and the percentage of colonies lost. (Colony_lost_pct). These three variables were selected for their likely correlation with each other, as greater concentrations of Varroa Mites might see greater colony losses. We were interested in finding this optimal time because we identified clear trends in the Varroa Mites life cycle that resulted in a greater impact of the mites on colonies. As such, through research, we can offer suggestions about requeening time, effectively curbing the growth of Varroa Mites in their early stages of growth and development. 
+
+In order to isolate details about the optimal time period, specific to a location, we first utilized a geographical representation of the data. This would allow us to observe broad trends of renovation and Varroa Mite infestation across states, especially in relation to their region. Following, we searched for a linear relationship between Colony_reno_pct and the change in Varroa mites using line graphs. The use of linear regression would allow us to intuitively grasp the strength of the relationship from the line’s angle. Lastly, we used a bar chart to plot Colony_lost_pct against Colony_reno_pct. This allowed us to identify anomalous states which displayed unnatural activity in their colonies, which we later attempted to explain with theories.
+
+## Data cleaning
+
+```{r raw data, echo = FALSE}
+### Reading in Raw data
+colony_raw_data <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2022/2022-01-11/colony.csv')
+stressor_raw_data <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2022/2022-01-11/stressor.csv')
+```
+
+### Colony Data Pre-processing
+
+For the colony data set, missing values for the number of colonies renovated as well as the percentage of it were computed to fill in the missing values. Additionally, it was found that entries for the entire 2019 April-June period were NA.
+
+```{r}
+colony_data <- colony_raw_data %>%
+  mutate(colony_lost_pct = ifelse(is.na(colony_lost_pct),
+                                  round(colony_lost / colony_max * 100),
+                                  colony_lost_pct)) %>%
+  mutate(colony_reno_pct = ifelse(is.na(colony_reno_pct), round(colony_reno / colony_max * 100), colony_reno_pct)) %>%
+  select(!c(colony_reno, colony_lost))
+```
+
+### Stressor Data Pre-Processing
+
+The cleaning of the stressors data set involved correcting the spelling of “Diseases” and converting it to a wider format to make it more suitable for analysis later on. We also noticed the same pattern of NA values for all the entries of the 2019 April-June period.
+
+```{r}
+stressor_data <- stressor_raw_data %>%
+  mutate(stressor = recode(stressor, "Disesases" = "Diseases")) %>%
+  pivot_wider(names_from = stressor, values_from = stress_pct, values_fill = list(stress_pct = NA))
+```
+
+### Combining Data
+
+We began the data cleaning by combining both data sets together by year, months and states columns. 
+
+We noticed that the `state` column included "Other States'' which we had identified to be the sum of data from New Hampshire, Rhode Island, Delaware, Nevada and Alaska, as well as "United States" which comprises the sum of all the states in the US. Since these two entries would not be able to give us valuable insights on the individual states of the US, we decided to filter them out.  
+
+We then decided to create a date type variable for each entry to help us with plotting our visualisations later on. 
+
+Next we removed other stressors that are not Varroa mites from our combined data as we only want to focus on Varroa mites in our report. 
+
+A `region` column was also created to categorise each state into its own region respectively, allowing for regional analysis of bee colony health and stress factors later on. 
+
+A crucial value we needed was the change in colonies affected by varroa mites, thus we created the column `vm_change` which is the subtraction of the current `Varroa mites` from the lead Varroa mites value. Note that the lead value is from the following quarter. 
+
+We finalised our data cleaning process by removing all data from 2019 April-June as they were all NA values.
+
+```{r}
+northeast <- c("Connecticut", "Maine", "Massachusetts", "Vermont", "New Jersey", "New York", "Pennsylvania")
+
+midwest <- c("Illinois", "Indiana", "Michigan", "Ohio", "Wisconsin", "Iowa", "Kansas", "Minnesota", "Missouri", "Nebraska", "North Dakota", "South Dakota")
+
+south <- c("Florida", "Georgia", "Maryland", "North Carolina", "South Carolina", "Virginia", "West Virginia", "Alabama", "Kentucky", "Mississippi", "Tennessee", "Arkansas", "Louisiana", "Oklahoma", "Texas")
+
+west <- c("Arizona", "Colorado", "Idaho", "Montana", "New Mexico", "Utah", "Wyoming", "California", "Hawaii", "Oregon", "Washington")
+
+states <- tibble(state = c(northeast, midwest, south, west),
+                 region = c(rep("Northeast", length(northeast)),
+                            rep("Midwest", length(midwest)),
+                            rep("South", length(south)),
+                            rep("West", length(west))))
+
+combined_data <- left_join(colony_data, stressor_data, by=c("year", "months", "state")) %>%
+  filter(state != "Other States", state != "United States") %>%
+  mutate(
+    month_order=case_when(
+      months=="January-March" ~ "01",
+      months=="April-June" ~ "04",
+      months == "July-September" ~ "07", 
+      months == "October-December" ~ "10"
+    ),
+    date = as.Date(paste0(year, "-" ,  month_order, "-","01"), "%Y-%m-%d")) %>%
+  select(-month_order, -`Other pests/parasites`, -Diseases, -Pesticides, -Other, -Unknown) %>%
+  full_join(states, by = "state") %>%
+  arrange(state, date) %>%
+  group_by(state) %>%
+  mutate(lead_vm = lead(`Varroa mites`, order_by = date, n = 1),
+         vm_change = lead_vm - `Varroa mites`) %>%
+  ungroup() %>%
+  filter(!(year == "2019" & months == "April-June"))
+```
+
+## Visualisation 1: Geographical Map
+
+### Geographical Distribution of Change in Varroa Mites infestations and Colony Renovation Percentage 
+
+Firstly, we plotted a geographical plot of the average quarterly change in colonies affected by Varroa mites over the years, mapping the colour “blue” to positive values and “red” to negative values. This would allow us to easily spot trends in which quarters lead to an increase in the colonies affected by Varroa mites in the following quarter. This plot was then placed on top of another geographical plot of the average colonies renovated in each quarter over the years, with “darkgreen” showing higher colonies renovated and “lightgreen” showing fewer colonies renovated in each state. Our plot also included outlines of the different regions that each state belongs to, which allows us to compare and identify how colony renovation in each quarter and regions of the US could have affected the change in colonies affected by varroa mites.
+
+```{r, fig.show='hold', fig.width=8, fig.height=10}
+### US State Data
+us_states <- map_data("state")
+
+### Data Filtering for Plot (Change in Varroa Mites)
+change_data_all_quarters_avg <- combined_data %>%
+  mutate(quarter = quarters(date)) %>%
+  group_by(state, region, quarter) %>%
+  summarize(avg_mites = mean(vm_change, na.rm = TRUE)) %>%
+  mutate(state = tolower(state)) %>%
+  left_join(us_states, by = c("state" = "region")) %>%
+  ungroup()
+
+### Data Filtering (Renovation PCT)
+reno_data_all_quarters_avg <- combined_data %>%
+  mutate(quarter = quarters(date)) %>%
+  group_by(state, region, quarter) %>%
+  summarize(avg_reno_pct = mean(colony_reno_pct, na.rm = TRUE)) %>%
+  mutate(state = tolower(state)) %>%
+  left_join(us_states, by = c("state" = "region")) %>%
+  ungroup()
+
+### Plotting heatmap
+change_quarter_plot <- ggplot(data = change_data_all_quarters_avg) +
+  geom_polygon(aes(x = long, y = lat, group = group, fill = ifelse(avg_mites >= 0, "blue", "red"), color = region)) +
+  labs(title = "Varroa Mites Infestations across the United States") +
+  scale_fill_identity(name = "Average Percent Change in Varroa Mites", guide = "legend",
+                      labels = c("Positive", "Negative")) +
+  theme_minimal() +
+  theme(legend.position = "bottom", legend.text = element_text(size = 6),
+        axis.title = element_blank(), axis.text = element_blank(), axis.ticks = element_blank()) +
+  facet_wrap(~quarter, ncol = 2, labeller = as_labeller(c(Q1 = "January-March", Q2 = "April-June", Q3 = "July-September", Q4 = "October-December")))
+
+reno_quarter_plot <- ggplot(data = reno_data_all_quarters_avg) +
+  geom_polygon(aes(x = long, y = lat, group = group, fill = avg_reno_pct, color = region)) +
+  scale_fill_continuous(name = "Average Percent of Colonies Renovated", low = "lightgreen", high="darkgreen") +
+  labs(title = "Colony Renovation Percentage across the United States") +
+  theme_minimal() +
+  theme(legend.position = "bottom", legend.text = element_text(size = 6), axis.title = element_blank(), axis.text = element_blank(), axis.ticks = element_blank()) +
+  facet_wrap(~quarter, ncol = 2, labeller = as_labeller(c(Q1 = "January-March", Q2 = "April-June", Q3 = "July-September", Q4 = "October-December")))
+
+grid.arrange(change_quarter_plot, reno_quarter_plot, nrow = 2)
+```
+
+From the first row of data, it is evident that the first half of the year sees a positive change in the number of Varroa mites across almost all the states. The trend is almost completely reversed in the second half of the year, with a significant part of the graph showing a negative change. This suggests some intervention that was likely performed at the end of the 2nd Quarter of the year which greatly disrupted the growth and spread of Varroa Mites.
+
+The second row of data further compounds this initial hypothesis, as the darker values are meant to represent a higher extent of renovation on colonies in the state. Due to the comparatively darker values found in the 2nd Quarter of the year, we can conclude that most renovations within a state are performed in that Quarter. This suggests a possible relationship between colony renovation and the presence of Varroa mites in colonies. Our second visualisation will investigate this relationship using statistical methods and new visualisations.
+
+## Visualisation 2: Scatter Plot
+
+### Change in Varroa mites vs Renovation of Colonies
+
+From the findings of our first visualisation, we wanted to explore further how much the colonies affected by Varroa mites had increased or decreased in each quarter. This would help us in identifying any common trends between changes in colonies affected by Varroa Mites and the percentage of colonies renovated. We decided to create a scatter plot of all the changes in percentage of colonies affected by varroa mites against the percentage of colonies renovated as it would include all values in our data. We then split the points according to their respective quarters and plotted a linear model of the data. Our graph would thus show how renovations can affect the changes in colonies affected by Varroa mites in the different quarters.
+
+```{r}
+ggplot(data = combined_data, aes(x = colony_reno_pct, y = vm_change, color = months))+
+  geom_point() +
+  geom_smooth(method = lm, se = FALSE) +
+  labs(title = "How Varroa mites change with colony renovation", x = "Percentage of Colonies renovated", y = "Change in Percentage of colonies affected by Varroa Mites")
+```
+
+From the second graph, we observe lines with below-zero values in the 3rd and 4th Quarter of the year. This is consistent with the negative change in the percentage of colonies affected by Varroa mites seen in the first visualisation. There is also a slightly negative gradient on all lines in the quarter, which may suggest a decrease in Varroa mites with increasing renovation. Specifically, the graphs above the y = 0 line, namely the 1st and 2nd Quarter, saw a slight dip in their angle, suggesting a lesser increase in Varroa mites as renovations increased. As for the graphs below the y = 0 line, the slight dip in the angle suggests that there is a larger decrease in Varroa mites as renovations increased. Nonetheless, since the gradients are very small, it suggests that while renovation does decrease the growth of Varroa mites, it may not be very efficient at resolving larger hoards of the mites in the region. 
+
+## Visualisation 3: Bar graphs
+
+### Percentage of Colony renovated vs Percentage of Colony Lost in July-September period in the West Region
+
+From our geographical map, the West region saw generally more increase than decrease in colonies affected by Varroa mites over the year. Our Scatter plot then proceeds to show that July-September was the quarter that saw the greatest decrease in colonies affected by Varroa mites. Therefore, we focused our third visualisation to find any anomalies within the West region from July-September that could have justified these changes. We plotted a bar graph of all the different states in the West region using `facet_wrap(~ state)` that compares the percentage of colonies lost with the percentage of colonies renovated in each year. This allows us to easily compare renovation and colonies lost in each state and find a correlation between the two.
+
+```{r}
+plot3 <- combined_data %>%
+  filter(region == "West", months == "July-September") %>%
+  pivot_longer(cols = c(colony_reno_pct, colony_lost_pct),
+               names_to = "colony",
+               values_to = "percentage")
+
+ggplot(plot3, aes(x = year, y = percentage, fill = colony)) +
+  geom_col(position = "dodge") +
+  facet_wrap(~ state) +
+  labs(title = "Bee Colonies in July-September period in the West Region", x = "", y = "Percentage of Colony") +
+  scale_fill_manual(values = c("colony_reno_pct" = "gold", "colony_lost_pct" = "black"),
+                    labels = c("colony_reno_pct" = "Percentage of Colony Renovated", "colony_lost_pct" = "Percentage of Colony Lost"))
+```
+
+From the bar graph, we are able to identify anomalous trends in states across the West. Most notably, Hawaii reports extremely high levels of colony renovation in the 3rd Quarter, with values ranging between 15% - 40% of all colonies. This is inconsistent with the comparatively lower values of renovation in surrounding states, which peak slightly past 20%. We therefore suspect that Hawaii’s more drastic response to the national decrease in colonies is correlated with the state’s own dependence on bees for economic or social reasons. On a positive note, Hawaii also reported a lower percentage of colonies lost, which does lend some truth to the relationship that increased renovation can improve colony outcomes and survivability. 
+
+
+## Discussion
+
+To determine the validity of the investigation, we first find the correlation coefficient between the two factors we wish to test. If there is a strong relationship between the percentage of renovation and the Varroa Mites, the results should be close to -1.  This is because a higher percentage of renovation should ideally result in more negative (smaller) Varroa mite percentages.
+
+```{r initial testing, echo = FALSE}
+
+coefficient <- cor.test(combined_data$vm_change, combined_data$colony_reno_pct)
+
+coefficient$estimate
+```
+
+Since the correlation coefficient is very far from -1, and is positive, we can deduce that the relationship between Varroa Mites and Renovation_percentage is not very significant. 
+
+To make meaning from results, it is imperative to stay afloat of recent developments in beekeeping circles that can justify anomalous results and the general trends being observed. 
+
+From the first visualisation, there were some insights that confirmed and further increased the specificity of existing recommendations by beekeepers. Beekeeping experts suggest that the requeened colonies (Requeening is considered a renovation in this data) see lower Varroa Mite and Virus levels in the year following the requeening. Since our results are organised by quarterly-changes, our findings reveal that not only do renovations control the spread and impact of Varroa Mites, the impacts are visible in much less than a year. Our data showed that the 2nd Quarter, with the greatest number of renovations, began to see the decrease in Varroa Mites in the 4th Quarter onwards. This is evident from the negative changes seen in the 3rd Quarter. This is consistent with the theory that requeening hives that are suffering from Varroa Mite infestations can strengthen weakened hives to become healthier ones. However, this process can take a significant amount of time due to the time taken for the queen to be accepted, lay new eggs and rebuild the colony. (Beeweaver,. n.d.). 
+
+Interestingly, we were able to observe the greatest levels of renovation in the 2nd Quarter and elevated levels of renovation in the 3rd Quarter. This supports some leading sentiments about requeening time in beekeeping circles. As determined by experts online, requeening colonies is performed at one of two critical points in a year. The first point of requeening can be performed 4-6 weeks before the greatest honey flow in mid-spring, which in the United States, is identified to be April (CarolinaHoneyBees, 2023). The second point is determined to be around the late-summer, which has been placed around July (University of Florida, n.d.). 
+
+Moving on to the discussion on the second graph. Due to the flatness of the gradient and the low correlation-coefficient calculated, the gradient is too insignificant. This is attributed to the lack of data for higher renovation values, leading to skewed graphs. However, the 3rd Quarter sees a stronger correlation between Varroa mites and renovations as experts suggest greater monitoring for mites and increased alcohol washes in late-Summer, near September, to prevent unchecked Varroa mites from multiplying in the hive (University of Minnesota, n.d.).
+
+True to our hypothesis, we were able to prove some dependence from the two states on bees. Hawaii, as an island with many native plant species, rely exclusively on local bees in the region to continuously pollinate them. The loss of bees in the region will inevitably lead to loss of important cultural and ecological specimens. As such, some species of bees in Hawaii have been classified as endangered, leading to much greater efforts from locals to sustain healthy colonies through requeening (Gallucci, 2016).  
+
+Overall, we are confident about the positive relationship between increased renovation and the decrease in Varroa Mite infestations, However, we were unable to isolate strong relationships between the time of the renovation and the impact on the Varroa Mite colonies. This is due to the absence of more data columns and points. Projecting into the future, with greater access to information about the life cycle of mites specific to certain regions and seasons or longitudinal studies in high-renovation states, we could possibly create trends that are more targeted and accurate.
+
+
+
+## Reference
+
+Publication | Honey Bee Colonies | ID: rn301137d | USDA Economics, Statistics and Market Information System. (n.d.). https://usda.library.cornell.edu/concern/publications/rn301137d?locale=en
+
+BeeWeaver Buzz. (2019, August 22). BeeWeaver relies on genetics & ReQueening to control varroa mites – BeeWeaver Honey Farm. https://beeweaver.com/blog/beeweaver-relies-on-genetics-requeening-to-control-varroa-mites/ 
+
+Anderson, C. (2023, July 5). The honey flow: nectar abundance. Carolina Honeybees. https://carolinahoneybees.com/honey-flow/ 
+
+Communications, I. (n.d.). Requeening a Beehive - Solutions for Your Life - University of Florida, Institute of Food and Agricultural Sciences - UF/IFAS. (C)Copyright 2023, UF/IFAS. https://sfyl.ifas.ufl.edu/agriculture/requeening-a-beehive/#:~:text=Although%20there%20is%20no%20hard,when%20queens%20are%20more%20available
+
+Varroa Mite Testing & Management | Bee Lab. (n.d.). https://beelab.umn.edu/varroa-mite-testing#:~:text=A%20spring%20mite%20control%20will,confirm%20that%20it%20was%20effective
+
+Gallucci, M. (2016, November 1). Hawaii’s bees are now protected under U.S. Endangered Species Act. Mashable. https://mashable.com/article/hawaii-bees-engandered-species
+
+## About 
+
+This project was developed for DSA2101 Essential Data Analytics Tools: Data Visualization at the National University of Singapore (NUS). The team is comprised of the following members:
+
+```{r, echo = FALSE}
+students <- data.frame(
+  Name = c("Ain Nabihah", "Liu Qianru", "Viloria Miguel Kahrlo Pastores", "Lim Jun Kai"),
+  Year = c("Y2", "Y2", "Y2","Y2"),
+  Major = c("DSA" , "DSA", "DSA", "DSA"),
+  Responsibilities = c("From the first and second visualisations, come up with a third visualisation that focuses on a specific region and quarter. Find a suitable combined data to use for all our visualisation. Wrote justification for all the visualisations we chose and the combined data",
+                       "Came up with a second visualisation for the report. Research and write justifications that are coherent for all our visualisations relating to the topic statement. Wrote our analysis and discussions for the report.",
+                       "Came up with the first visualisation of the report. Cleaned individual data and combined them. Helped to form up references. ",
+                       "From the first and second visualisations, come up with a third visualisation that focuses on a specific region and quarter. Helped with initial data cleaning. Helped to clean up and shorten codes. Come up with the entire layout and skeleton of the report. Created all our references.")
+)
+
+kable(students, format = "html")
+
+```
+
+
+**Paragraphs expressing our admiration and/or offer friendly suggestions to each team member:**
+
+Ain: Ain kept a constant eye on our data, constantly refining our methods and engineering new methods of analysis. She identified key trends and anomalies which were critical to providing substance to this entire report.
+
+Qianru: Qianru has been our biggest strength in the writing of the report thanks to her writing skills! We really appreciate you refining the report and buffing up our data with research.
+
+Miguel: Miguel was super quick on task, and always produced results as fast as he can whenever the group requires him to get any tasks done! 
+
+Jun Kai: Jun Kai was also really efficient especially in producing short codes and in helping us create the layout of our rmarkdown file!
+
